@@ -35,13 +35,13 @@ This project uses your webcam and AI models to track hand gestures in real time 
 
 | Gesture | Action |
 |--------|--------|
-| ![Move Cursor](images/move_cursor.png) | Move cursor with index finger |
-| ![Click](images/click.png) | Click with thumb + index tap |
-| ![Scroll up](images/scroll_up.png) | Scroll up gesture |
-| ![Scroll down](images/scroll_down.png) | Scroll down gesture |
+| ![Move Cursor](image/cursor.png) | Move cursor with index finger |
+| ![Click](image/click.png) | Click with thumb + index tap |
+| ![Scroll up](image/scroll_up.png) | Scroll up gesture |
+| ![Scroll down](image/scroll_down.png) | Scroll down gesture |
 
 
-> *(Make sure to put your images inside an `/images` folder in your repo)*
+
 
 ---
 
