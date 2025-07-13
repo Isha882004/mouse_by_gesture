@@ -1,133 +1,102 @@
 import cv2
 import mediapipe as mp
 import pyautogui
-import random
-import util
-from pynput.mouse import Button, Controller
-mouse = Controller()
+import time
+import math
 
+# Initialize MediaPipe Hands
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
-screen_width, screen_height = pyautogui.size()
+# Start webcam
+cap = cv2.VideoCapture(0)
 
-mpHands = mp.solutions.hands
-hands = mpHands.Hands(
-    static_image_mode=False,
-    model_complexity=1,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7,
-    max_num_hands=1
-)
+# Gesture state variables
+click_start_time = None
+click_times = []
+click_cooldown = 0.5
+scroll_mode = False
+freeze_cursor = False
 
+screen_w, screen_h = pyautogui.size()
+print("\n✅ Smart Hand Mouse Control Started — Press ESC to exit.")
 
-def find_finger_tip(processed):
-    if processed.multi_hand_landmarks:
-        hand_landmarks = processed.multi_hand_landmarks[0]  # Assuming only one hand is detected
-        index_finger_tip = hand_landmarks.landmark[mpHands.HandLandmark.INDEX_FINGER_TIP]
-        return index_finger_tip
-    return None, None
+prev_screen_x, prev_screen_y = 0, 0
 
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-def move_mouse(index_finger_tip):
-    if index_finger_tip is not None:
-        x = int(index_finger_tip.x * screen_width)
-        y = int(index_finger_tip.y / 2 * screen_height)
-        pyautogui.moveTo(x, y)
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
 
+    h, w, _ = frame.shape
 
-def is_left_click(landmark_list, thumb_index_dist):
-    return (
-            util.get_angle(landmark_list[5], landmark_list[6], landmark_list[8]) < 50 and
-            util.get_angle(landmark_list[9], landmark_list[10], landmark_list[12]) > 90 and
-            thumb_index_dist > 50
-    )
+    if result.multi_hand_landmarks:
+        for hand_landmarks in result.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
+            # Get finger tips
+            thumb_tip = hand_landmarks.landmark[4]
+            index_tip = hand_landmarks.landmark[8]
+            middle_tip = hand_landmarks.landmark[12]
+            ring_tip = hand_landmarks.landmark[16]
+            pinky_tip = hand_landmarks.landmark[20]
 
-def is_right_click(landmark_list, thumb_index_dist):
-    return (
-            util.get_angle(landmark_list[9], landmark_list[10], landmark_list[12]) < 50 and
-            util.get_angle(landmark_list[5], landmark_list[6], landmark_list[8]) > 90  and
-            thumb_index_dist > 50
-    )
+            # Determine fingers state
+            fingers = [
+                1 if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[tip - 2].y else 0
+                for tip in [8, 12, 16, 20]
+            ]
 
+            # Distance between thumb and index
+            dist = math.hypot(thumb_tip.x - index_tip.x, thumb_tip.y - index_tip.y)
 
-def is_double_click(landmark_list, thumb_index_dist):
-    return (
-            util.get_angle(landmark_list[5], landmark_list[6], landmark_list[8]) < 50 and
-            util.get_angle(landmark_list[9], landmark_list[10], landmark_list[12]) < 50 and
-            thumb_index_dist > 50
-    )
+            # Freeze cursor when index & thumb close
+            if dist < 0.04:
+                if not freeze_cursor:
+                    freeze_cursor = True
+                    click_times.append(time.time())
 
+                    # Double click check
+                    if len(click_times) >= 2 and click_times[-1] - click_times[-2] < 0.4:
+                        pyautogui.doubleClick()
+                        cv2.putText(frame, "Double Click", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                        click_times = []
+                    else:
+                        pyautogui.click()
+                        cv2.putText(frame, "Single Click", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+            else:
+                freeze_cursor = False
 
-def is_screenshot(landmark_list, thumb_index_dist):
-    return (
-            util.get_angle(landmark_list[5], landmark_list[6], landmark_list[8]) < 50 and
-            util.get_angle(landmark_list[9], landmark_list[10], landmark_list[12]) < 50 and
-            thumb_index_dist < 50
-    )
+            # Move mouse only when not frozen
+            if not freeze_cursor:
+                screen_x = int(index_tip.x * screen_w)
+                screen_y = int(index_tip.y * screen_h)
+                pyautogui.moveTo(screen_x, screen_y, duration=0.05)
+                prev_screen_x, prev_screen_y = screen_x, screen_y
 
+            # Scroll mode detection: All fingers open
+            if sum(fingers) == 4:
+                scroll_mode = True
+            else:
+                scroll_mode = False
 
-def detect_gesture(frame, landmark_list, processed):
-    if len(landmark_list) >= 21:
+            # Scroll action (vertical movement of index)
+            if scroll_mode:
+                if index_tip.y < 0.4:
+                    pyautogui.scroll(60)  # faster scroll
+                    cv2.putText(frame, "Scroll Up", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                elif index_tip.y > 0.6:
+                    pyautogui.scroll(-60)  # faster scroll
+                    cv2.putText(frame, "Scroll Down", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        index_finger_tip = find_finger_tip(processed)
-        thumb_index_dist = util.get_distance([landmark_list[4], landmark_list[5]])
+    cv2.imshow("Smart Hand Mouse Control", frame)
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
 
-        if util.get_distance([landmark_list[4], landmark_list[5]]) < 50  and util.get_angle(landmark_list[5], landmark_list[6], landmark_list[8]) > 90:
-            move_mouse(index_finger_tip)
-        elif is_left_click(landmark_list,  thumb_index_dist):
-            mouse.press(Button.left)
-            mouse.release(Button.left)
-            cv2.putText(frame, "Left Click", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        elif is_right_click(landmark_list, thumb_index_dist):
-            mouse.press(Button.right)
-            mouse.release(Button.right)
-            cv2.putText(frame, "Right Click", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        elif is_double_click(landmark_list, thumb_index_dist):
-            pyautogui.doubleClick()
-            cv2.putText(frame, "Double Click", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        elif is_screenshot(landmark_list,thumb_index_dist ):
-            im1 = pyautogui.screenshot()
-            label = random.randint(1, 1000)
-            im1.save(f'my_screenshot_{label}.png')
-            cv2.putText(frame, "Screenshot Taken", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        # Stop camera when all fingers are open and spread
-        
-
-
-
-def main():
-    draw = mp.solutions.drawing_utils
-    cap = cv2.VideoCapture(0)
-
-    try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.flip(frame, 1)
-            frameRGB = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            processed = hands.process(frameRGB)
-
-            landmark_list = []
-            if processed.multi_hand_landmarks:
-                hand_landmarks = processed.multi_hand_landmarks[0]  # Assuming only one hand is detected
-                draw.draw_landmarks(frame, hand_landmarks, mpHands.HAND_CONNECTIONS)
-                for lm in hand_landmarks.landmark:
-                    landmark_list.append((lm.x, lm.y))
-
-            detect_gesture(frame, landmark_list, processed)
-
-            cv2.imshow('Frame', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
-
-
-if __name__ == '__main__':
-    main()
-
-
-
-
+cap.release()
+cv2.destroyAllWindows()
